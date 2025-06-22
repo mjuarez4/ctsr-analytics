@@ -72,13 +72,13 @@ def plot_severity_timeseries(
     severity = comment_annotations.select(
         pl.col("comment_id"),
         pl.when(pl.col("bullying_severity") == "mild")
-        .then(1.0)
+        .then(pl.lit(1.0))
         .when(pl.col("bullying_severity") == "moderate")
-        .then(2.0)
+        .then(pl.lit(2.0))
         .when(pl.col("bullying_severity") == "severe")
-        .then(3.0)
+        .then(pl.lit(3.0))
         .when(pl.col("bullying_severity").is_null())
-        .then(0.0)
+        .then(pl.lit(0.0))
         .alias("severity"),
     )
     results = (
@@ -104,8 +104,11 @@ def plot_severity_timeseries(
         alt.Chart(unpivoted_resutls)
         .mark_line()  # pyright: ignore[reportUnknownMemberType]
         .encode(
-            x=alt.X("comment_number").title("Comment Sequence"),
+            x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(
+                "Comment Sequence"
+            ),
             y=alt.Y("value", scale=alt.Scale(domain=[0, 1])).title(None),
+            strokeDash=alt.StrokeDash("variable").legend(None),
             color=alt.Color(
                 "variable",
                 scale=alt.Scale(
@@ -144,6 +147,97 @@ def plot_severity_timeseries(
     )
 
 
+def plot_role_timeseries(
+    comments: pl.DataFrame, comment_annotations: pl.DataFrame
+) -> None:
+    time_line = comments.select(
+        pl.col("comment_id"),
+        pl.col("comment_created_at")
+        .rank("ordinal")
+        .over("unit_id")
+        .alias("comment_number"),
+    )
+    role_majority = (
+        comment_annotations.select(
+            pl.col("comment_id"),
+            pl.when(pl.col("bullying_role") == "non_aggressive_victim")
+            .then(pl.lit("Non-Agg Victim"))
+            .when(pl.col("bullying_role") == "aggressive_victim")
+            .then(pl.lit("Agg Victim"))
+            .when(pl.col("bullying_role") == "non_aggressive_defender")
+            .then(pl.lit("Non-Agg Defend"))
+            .when(pl.col("bullying_role") == "aggressive_defender")
+            .then(pl.lit("Agg Defend"))
+            .when(pl.col("bullying_role") == "bully")
+            .then(pl.lit("Bully"))
+            .when(pl.col("bullying_role") == "bully_assistant")
+            .then(pl.lit("Bully Assist"))
+            .when(pl.col("bullying_role") == "passive_bystander")
+            .then(pl.lit("Bystander"))
+            .alias("bullying_role"),
+        )
+        .group_by(["comment_id", "bullying_role"])
+        .len("role_count")
+    )
+    top_role = role_majority.group_by("comment_id").agg(
+        pl.col("role_count").max().alias("max_role_count")
+    )
+    filtered_roles = (
+        (
+            role_majority.join(top_role, on="comment_id", how="inner")
+            .filter(pl.col("role_count") >= pl.col("max_role_count"))
+            .with_columns(
+                pl.when(pl.col("max_role_count") <= 2)
+                .then(pl.lit("Inconclusive"))
+                .otherwise(pl.col("bullying_role"))
+                .alias("remaped_role")
+            )
+        )
+        .unique(subset=["comment_id", "remaped_role", "role_count"])
+        .select(
+            pl.col(
+                "comment_id",
+                "remaped_role",
+            )
+        )
+        .sort("comment_id")
+    )
+    time_line_role = time_line.join(filtered_roles, on="comment_id", how="inner")
+    comment_role_counts = (
+        time_line_role.group_by(["comment_number", "remaped_role"])
+        .len("role_count")
+        .sort("comment_number")
+    )
+    (
+        alt.Chart(comment_role_counts)
+        .mark_area()  # pyright: ignore[reportUnknownMemberType]
+        .encode(
+            x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(
+                "Comment Sequence"
+            ),
+            y=alt.Y("role_count", title="Percent of Comments w/ Role").stack(
+                "normalize"
+            ),
+            color=alt.Color(
+                "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
+            ).legend(
+                title=None,
+                orient="none",
+                legendX=500,
+                legendY=50,
+                titleOrient="left",
+                # direction="horizontal",
+            ),
+        )
+        .configure_legend(symbolStrokeColor="black", symbolStrokeWidth=1)
+        .properties(title="Temporal Dynamics of Roles", width=600, height=200)
+        .configure_title(fontSize=12, anchor="middle", color="black")
+        .configure_axis(grid=False)
+        .configure_view(stroke=None)
+        .save("time_series_roles.pdf", format="pdf")
+    )
+
+
 comments = query_duckdb("SELECT * FROM instagram.comments;")
 comment_annotations = query_duckdb("SELECT * FROM mturk.comment_annotations;")
 # comment_topics = query_duckdb("SELECT * FROM mturk.comment_topics;")
@@ -152,4 +246,5 @@ comment_annotations = query_duckdb("SELECT * FROM mturk.comment_annotations;")
 # count_comments(comments)
 # percent_bully_annotations(comment_annotations)
 # count_comments_majority_bullying(comment_annotations)
-plot_severity_timeseries(comments, comment_annotations)
+# plot_severity_timeseries(comments, comment_annotations)
+plot_role_timeseries(comments, comment_annotations)
