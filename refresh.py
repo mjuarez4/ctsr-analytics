@@ -92,27 +92,34 @@ def plot_severity_timeseries(
         .sort("comment_number")
         .select(
             pl.col("comment_number"),
-            pl.col("mean_severity").rolling_mean(window_size=5).alias("mean_severity"),
-            pl.col("std_severity").rolling_mean(window_size=5).alias("std_severity"),
+            pl.col("mean_severity").rolling_mean(window_size=5).alias("Mean Severity"),
+            pl.col("std_severity").rolling_mean(window_size=5).alias("STD Severity"),
         )
     )
     unpivoted_resutls = results.unpivot(
-        on=["mean_severity", "std_severity"], index="comment_number"
+        on=["Mean Severity", "STD Severity"], index="comment_number"
     ).sort("comment_number")
 
     time_series = (
         alt.Chart(unpivoted_resutls)
-        .mark_line()
+        .mark_line()  # pyright: ignore[reportUnknownMemberType]
         .encode(
             x=alt.X("comment_number").title("Comment Sequence"),
-            y=alt.Y("value").title(None),
+            y=alt.Y("value", scale=alt.Scale(domain=[0, 1])).title(None),
             color=alt.Color(
                 "variable",
                 scale=alt.Scale(
-                    domain=["mean_severity", "std_severity"],
+                    domain=["Mean Severity", "STD Severity"],
                     range=["#191717", "#7D7C7C"],
                 ),
-            ).legend(None),
+            ).legend(
+                title=None,
+                orient="none",
+                legendX=490,
+                legendY=10,
+                direction="horizontal",
+                titleOrient="left",
+            ),
         )
         .properties(
             width=600,
@@ -120,20 +127,20 @@ def plot_severity_timeseries(
         )
     )
     boxplot = (
-        alt.Chart(severity)
-        .mark_boxplot(color="#454545")
+        alt.Chart(severity)  # pyright: ignore[reportUnknownMemberType]
+        .mark_boxplot(color="#454545", outliers={"size": 5})
         .encode(y=alt.Y("severity", title="Severity"))
         .properties(
             height=200,
         )
     )
     (
-        alt.hconcat(boxplot, time_series)
-        .properties(title="testing")
-        .configure_title(fontSize=20, color="black")
-        # .configure_axis(grid=False)
-        # .configure_view(stroke=None)
-        .save("testing.pdf", format="pdf")
+        alt.hconcat(boxplot, time_series)  # pyright: ignore[reportUnknownMemberType]
+        .properties(title="Temporal Dynamics of Comment Severity")
+        .configure_title(fontSize=12, anchor="middle", color="black")
+        .configure_axis(grid=False)
+        .configure_view(stroke=None)
+        .save("time_series_severity.pdf", format="pdf")
     )
 
 
