@@ -202,12 +202,64 @@ def plot_role_timeseries(
         )
         .sort("comment_id")
     )
+
+    bar = (
+        alt.Chart(
+            filtered_roles.group_by("remaped_role").len("role_count").sort("role_count")
+        )
+        .mark_bar()  # pyright: ignore[reportUnknownMemberType]
+        .encode(
+            x=alt.X("role_count", title="Comment Count"),
+            y=alt.Y("remaped_role", title="Bullying Role").sort("-x"),
+            color=alt.Color(
+                "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
+            ).legend(None),
+        )
+    )
+    text = bar.mark_text(align="center", baseline="bottom", dx=16, dy=5).encode(
+        text="role_count", color=alt.value("black")
+    )
+
+    (
+        (bar + text)
+        .configure_axis(grid=False)
+        .configure_view(stroke=None)
+        .save("role_bar.pdf", format="pdf")
+    )
+
     time_line_role = time_line.join(filtered_roles, on="comment_id", how="inner")
     comment_role_counts = (
         time_line_role.group_by(["comment_number", "remaped_role"])
         .len("role_count")
         .sort("comment_number")
     )
+    (
+        alt.Chart(comment_role_counts)
+        .mark_area()  # pyright: ignore[reportUnknownMemberType]
+        .encode(
+            x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(
+                "Comment Sequence"
+            ),
+            y=alt.Y("role_count", title="Comment Comment by Role"),
+            color=alt.Color(
+                "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
+            ).legend(
+                title=None,
+                orient="none",
+                legendX=500,
+                legendY=10,
+                titleOrient="left",
+                # direction="horizontal",
+            ),
+        )
+        .configure_legend(symbolStrokeColor="black", symbolStrokeWidth=1)
+        .properties(title="Temporal Dynamics of Roles", width=600, height=200)
+        .configure_title(fontSize=12, anchor="middle", color="black")
+        .configure_axis(grid=False)
+        .configure_view(stroke=None)
+        .save("time_series_role_counts.pdf", format="pdf")
+    )
+
     (
         alt.Chart(comment_role_counts)
         .mark_area()  # pyright: ignore[reportUnknownMemberType]
@@ -234,7 +286,7 @@ def plot_role_timeseries(
         .configure_title(fontSize=12, anchor="middle", color="black")
         .configure_axis(grid=False)
         .configure_view(stroke=None)
-        .save("time_series_roles.pdf", format="pdf")
+        .save("time_series_role_percent.pdf", format="pdf")
     )
 
 
@@ -246,5 +298,5 @@ comment_annotations = query_duckdb("SELECT * FROM mturk.comment_annotations;")
 # count_comments(comments)
 # percent_bully_annotations(comment_annotations)
 # count_comments_majority_bullying(comment_annotations)
-# plot_severity_timeseries(comments, comment_annotations)
+plot_severity_timeseries(comments, comment_annotations)
 plot_role_timeseries(comments, comment_annotations)
