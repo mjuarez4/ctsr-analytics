@@ -1,3 +1,4 @@
+# pyright: basic
 from contextlib import closing
 from pathlib import Path
 import duckdb
@@ -81,6 +82,7 @@ def plot_severity_timeseries(
         .then(pl.lit(0.0))
         .alias("severity"),
     )
+
     results = (
         time_line.join(severity, on="comment_id", how="inner")
         .select(pl.col("comment_number", "severity"))
@@ -93,11 +95,28 @@ def plot_severity_timeseries(
         .select(
             pl.col("comment_number"),
             pl.col("mean_severity").rolling_mean(window_size=5).alias("Mean Severity"),
-            pl.col("std_severity").rolling_mean(window_size=5).alias("STD Severity"),
         )
     )
-    unpivoted_resutls = results.unpivot(
-        on=["Mean Severity", "STD Severity"], index="comment_number"
+
+    only_cb_results = (
+        time_line.join(severity, on="comment_id", how="inner")
+        .filter(pl.col("severity") > 0.0)
+        .select(pl.col("comment_number", "severity"))
+        .group_by(pl.col("comment_number"))
+        .agg(
+            pl.col("severity").mean().alias("mean_severity"),
+        )
+        .sort("comment_number")
+        .select(
+            pl.col("comment_number"),
+            pl.col("mean_severity")
+            .rolling_mean(window_size=5)
+            .alias("Mean Bullying Severity"),
+        )
+    )
+    joined_results = results.join(only_cb_results, on="comment_number", how="inner")
+    unpivoted_resutls = joined_results.unpivot(
+        on=["Mean Severity", "Mean Bullying Severity"], index="comment_number"
     ).sort("comment_number")
 
     time_series = (
@@ -107,12 +126,12 @@ def plot_severity_timeseries(
             x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(
                 "Comment Sequence"
             ),
-            y=alt.Y("value", scale=alt.Scale(domain=[0, 1])).title(None),
+            y=alt.Y("value", scale=alt.Scale(domain=[0, 2])).title(None),
             strokeDash=alt.StrokeDash("variable").legend(None),
             color=alt.Color(
                 "variable",
                 scale=alt.Scale(
-                    domain=["Mean Severity", "STD Severity"],
+                    domain=["Mean Severity", "Mean Bullying Severity"],
                     range=["#191717", "#7D7C7C"],
                 ),
             ).legend(
@@ -210,57 +229,54 @@ def plot_role_timeseries(
         .mark_bar()  # pyright: ignore[reportUnknownMemberType]
         .encode(
             x=alt.X("role_count", title="Comment Count"),
-            y=alt.Y("remaped_role", title="Bullying Role").sort("-x"),
-            color=alt.Color(
-                "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
-            ).legend(None),
+            y=alt.Y("remaped_role", title=None).sort("-x"),
+            color=alt.value("#636363"),
         )
     )
-    text = bar.mark_text(align="center", baseline="bottom", dx=16, dy=5).encode(
-        text="role_count", color=alt.value("black")
-    )
+    text = bar.mark_text(
+        align="center", baseline="bottom", dx=18, dy=5, fontSize=10
+    ).encode(text=alt.Text("role_count", format=","), color=alt.value("black"))
 
     (
         (bar + text)
+        .properties(width=200, height=200)
         .configure_axis(grid=False)
         .configure_view(stroke=None)
         .save("role_bar.pdf", format="pdf")
     )
 
     time_line_role = time_line.join(filtered_roles, on="comment_id", how="inner")
+
     comment_role_counts = (
         time_line_role.group_by(["comment_number", "remaped_role"])
         .len("role_count")
         .sort("comment_number")
     )
-    (
+
+    upper = (
         alt.Chart(comment_role_counts)
         .mark_area()  # pyright: ignore[reportUnknownMemberType]
         .encode(
-            x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(
-                "Comment Sequence"
-            ),
-            y=alt.Y("role_count", title="Comment Comment by Role"),
+            x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(None),
+            y=alt.Y("role_count", title="Comment Count by Role"),
             color=alt.Color(
                 "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
             ).legend(
                 title=None,
                 orient="none",
-                legendX=500,
-                legendY=10,
+                legendX=400,
+                # legendY=140,
+                # symbolLimit=5,
+                columns=2,
+                legendY=-15,
                 titleOrient="left",
-                # direction="horizontal",
+                direction="horizontal",
             ),
         )
-        .configure_legend(symbolStrokeColor="black", symbolStrokeWidth=1)
-        .properties(title="Temporal Dynamics of Roles", width=600, height=200)
-        .configure_title(fontSize=12, anchor="middle", color="black")
-        .configure_axis(grid=False)
-        .configure_view(stroke=None)
-        .save("time_series_role_counts.pdf", format="pdf")
+        .properties(title="Temporal Dynamics of Roles", width=600, height=100)
     )
 
-    (
+    lower = (
         alt.Chart(comment_role_counts)
         .mark_area()  # pyright: ignore[reportUnknownMemberType]
         .encode(
@@ -272,31 +288,154 @@ def plot_role_timeseries(
             ),
             color=alt.Color(
                 "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
-            ).legend(
-                title=None,
-                orient="none",
-                legendX=500,
-                legendY=50,
-                titleOrient="left",
-                # direction="horizontal",
             ),
         )
+        .properties(width=600, height=100)
+    )
+    (
+        alt.vconcat(upper, lower)
         .configure_legend(symbolStrokeColor="black", symbolStrokeWidth=1)
-        .properties(title="Temporal Dynamics of Roles", width=600, height=200)
         .configure_title(fontSize=12, anchor="middle", color="black")
         .configure_axis(grid=False)
         .configure_view(stroke=None)
-        .save("time_series_role_percent.pdf", format="pdf")
+        .save("combined_time_series_role_percent.pdf", format="pdf")
+    )
+
+
+def plot_topic_heat_map(
+    comment_topics: pl.DataFrame, comment_annotations: pl.DataFrame
+):
+    severity = comment_annotations.select(
+        pl.col("comment_id", "assignment_id", "bullying_severity")
+    ).filter(pl.col("bullying_severity").is_not_null())
+
+    print(severity)
+
+    severity_topic = comment_topics.join(
+        severity,
+        on=["comment_id", "assignment_id"],
+        how="inner",
+    ).select(
+        pl.col("bullying_severity").str.to_titlecase().alias("bullying_severity"),
+        pl.when(pl.col("topic") == "none")
+        .then(pl.lit("other"))
+        .otherwise(pl.col("topic"))
+        .str.replace("_", " ")
+        .str.to_titlecase()
+        .alias("topic"),
+    )
+    heat_map = (
+        severity_topic.group_by(["topic", "bullying_severity"])
+        .agg(pl.len().alias("count"))
+        .sort("count")
+    )
+    figure = (
+        alt.Chart(heat_map)
+        .mark_rect()
+        .encode(
+            x=alt.X(
+                "bullying_severity:O",
+                axis=alt.Axis(labelAngle=0),
+                title="Severity",
+            ),
+            y=alt.Y("topic:O", title="Bullying Topic"),
+            color=alt.Color(
+                "count:Q",
+                title="Count",
+                scale=alt.Scale(scheme="lightgreyred", domain=[73, 5000]),
+            ),
+        )
+    )
+    text = (
+        alt.Chart(heat_map)
+        .mark_text(baseline="middle")
+        .encode(
+            x="bullying_severity:O",
+            y="topic:O",
+            text=alt.Text("count:Q", format=","),
+            color=alt.value("black"),  # or 'white' depending on your color scale
+        )
+    )
+    (
+        (figure + text)
+        .properties(title="Topic Severity Heatmap", height=200, width=200)
+        .configure_title(fontSize=12, anchor="middle", color="black")
+        .save("topic_severity_heatmap.pdf", format="pdf")
+    )
+
+
+def plot_cb(comments: pl.DataFrame, comment_annotations: pl.DataFrame):
+    time_line = comments.select(
+        pl.col("comment_id"),
+        pl.col("comment_created_at")
+        .rank("ordinal")
+        .over("unit_id")
+        .alias("comment_number"),
+    )
+
+    counts = (
+        comment_annotations.select(
+            pl.col("comment_id"),
+            pl.when(pl.col("is_cyberbullying"))
+            .then(pl.lit("Cyberbullying"))
+            .otherwise(pl.lit("Non-Cyberbullying"))
+            .alias("is_cyberbullying"),
+        )
+        .group_by(["comment_id", "is_cyberbullying"])
+        .len("count")
+    )
+    print(counts)
+    time_line_bullying = (
+        time_line.join(counts, on="comment_id", how="inner")
+        .group_by(["comment_number", "is_cyberbullying"])
+        .agg(pl.col("count").sum().alias("count"))
+    )
+    (
+        alt.Chart(time_line_bullying)
+        .mark_line()  # pyright: ignore[reportUnknownMemberType]
+        .encode(
+            x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(
+                "Comment Sequence"
+            ),
+            y=alt.Y("count").title("Cyberbullying Count"),
+            # strokeDash=alt.StrokeDash("variable").legend(None),
+            color=alt.Color(
+                "is_cyberbullying",
+                scale=alt.Scale(
+                    domain=["Cyberbullying", "Non-Cyberbullying"],
+                    range=["#191717", "#7D7C7C"],
+                ),
+            ).legend(
+                title=None,
+                orient="none",
+                legendX=390,
+                legendY=10,
+                direction="horizontal",
+                titleOrient="left",
+            ),
+        )
+        .properties(
+            title="Temporal Dynamics of Cyberbullying",
+            width=600,
+            height=200,
+        )
+        .configure_legend(symbolStrokeColor="black", symbolStrokeWidth=1)
+        .configure_title(fontSize=12, anchor="middle", color="black")
+        .configure_axis(grid=False)
+        .configure_view(stroke=None)
+        .save("time_series_cb.pdf", format="pdf")
     )
 
 
 comments = query_duckdb("SELECT * FROM instagram.comments;")
 comment_annotations = query_duckdb("SELECT * FROM mturk.comment_annotations;")
-# comment_topics = query_duckdb("SELECT * FROM mturk.comment_topics;")
+comment_topics = query_duckdb("SELECT * FROM mturk.comment_topics;")
 # sessions = query_duckdb("SELECT * FROM instagram.sessions;")
 # count_sessions(sessions)
 # count_comments(comments)
 # percent_bully_annotations(comment_annotations)
 # count_comments_majority_bullying(comment_annotations)
 plot_severity_timeseries(comments, comment_annotations)
-plot_role_timeseries(comments, comment_annotations)
+# plot_role_timeseries(comments, comment_annotations)
+# plot_topic_heat_map(comment_topics, comment_annotations)
+plot_cb(comments, comment_annotations)
