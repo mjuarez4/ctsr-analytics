@@ -7,6 +7,25 @@ import altair as alt
 # import matplotlib.pyplot as plt
 # import numpy as np
 
+color_range = [
+    "#08306B",
+    "#2171B5",
+    "#C6DBEF",
+    "#6BAED6",
+    "#d9d9d9",
+    "#969696",
+    "#525252",
+    "#000000",
+]
+
+heat_range = [
+    # "#08306B",
+    "#2171B5",
+    "#6BAED6",
+    "#C6DBEF",
+    "#f0f0f0",
+]
+
 
 def query_duckdb(query: str) -> pl.DataFrame:
     assert "SELECT" in query
@@ -94,7 +113,7 @@ def plot_severity_timeseries(
         .sort("comment_number")
         .select(
             pl.col("comment_number"),
-            pl.col("mean_severity").rolling_mean(window_size=5).alias("Mean Severity"),
+            pl.col("mean_severity").alias("Mean Severity"),
         )
     )
 
@@ -109,9 +128,7 @@ def plot_severity_timeseries(
         .sort("comment_number")
         .select(
             pl.col("comment_number"),
-            pl.col("mean_severity")
-            .rolling_mean(window_size=5)
-            .alias("Mean Bullying Severity"),
+            pl.col("mean_severity").alias("Mean Bullying Severity"),
         )
     )
     joined_results = results.join(only_cb_results, on="comment_number", how="inner")
@@ -126,7 +143,7 @@ def plot_severity_timeseries(
             x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(
                 "Comment Sequence"
             ),
-            y=alt.Y("value", scale=alt.Scale(domain=[0, 2])).title(None),
+            y=alt.Y("value", scale=alt.Scale(domain=[0, 2])).title("Severity"),
             strokeDash=alt.StrokeDash("variable").legend(None),
             color=alt.Color(
                 "variable",
@@ -137,30 +154,19 @@ def plot_severity_timeseries(
             ).legend(
                 title=None,
                 orient="none",
-                legendX=490,
-                legendY=10,
+                legendX=290,
+                legendY=-5,
                 direction="horizontal",
                 titleOrient="left",
             ),
         )
-        .properties(
-            width=600,
-            height=200,
-        )
-    )
-    boxplot = (
-        alt.Chart(severity)  # pyright: ignore[reportUnknownMemberType]
-        .mark_boxplot(color="#454545", outliers={"size": 5})
-        .encode(y=alt.Y("severity", title="Severity"))
-        .properties(
-            height=200,
-        )
     )
     (
-        alt.hconcat(boxplot, time_series)  # pyright: ignore[reportUnknownMemberType]
-        .properties(title="Temporal Dynamics of Comment Severity")
-        .configure_title(fontSize=12, anchor="middle", color="black")
-        .configure_axis(grid=False)
+        time_series.properties(  # pyright: ignore[reportUnknownMemberType]
+            width=600,
+            height=75,
+        )
+        .configure_axis(grid=False, titleFontSize=10)
         .configure_view(stroke=None)
         .save("time_series_severity.pdf", format="pdf")
     )
@@ -240,7 +246,7 @@ def plot_role_timeseries(
     (
         (bar + text)
         .properties(width=200, height=200)
-        .configure_axis(grid=False)
+        .configure_axis(grid=False, titleFontSize=10)
         .configure_view(stroke=None)
         .save("role_bar.pdf", format="pdf")
     )
@@ -255,12 +261,16 @@ def plot_role_timeseries(
 
     upper = (
         alt.Chart(comment_role_counts)
-        .mark_area()  # pyright: ignore[reportUnknownMemberType]
+        .mark_line(strokeWidth=1.5, fillOpacity=1.0, strokeOpacity=1)  # pyright: ignore[reportUnknownMemberType]
         .encode(
             x=alt.X("comment_number", scale=alt.Scale(domain=[0, 152])).title(None),
             y=alt.Y("role_count", title="Comment Count by Role"),
             color=alt.Color(
-                "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
+                "remaped_role",
+                scale=alt.Scale(
+                    range=color_range,
+                    reverse=True,
+                ),
             ).legend(
                 title=None,
                 orient="none",
@@ -273,7 +283,7 @@ def plot_role_timeseries(
                 direction="horizontal",
             ),
         )
-        .properties(title="Temporal Dynamics of Roles", width=600, height=100)
+        .properties(width=600, height=75)
     )
 
     lower = (
@@ -287,16 +297,15 @@ def plot_role_timeseries(
                 "normalize"
             ),
             color=alt.Color(
-                "remaped_role", scale=alt.Scale(scheme="category20c", reverse=True)
+                "remaped_role", scale=alt.Scale(range=color_range, reverse=True)
             ),
         )
-        .properties(width=600, height=100)
+        .properties(width=600, height=75)
     )
     (
         alt.vconcat(upper, lower)
         .configure_legend(symbolStrokeColor="black", symbolStrokeWidth=1)
-        .configure_title(fontSize=12, anchor="middle", color="black")
-        .configure_axis(grid=False)
+        .configure_axis(grid=False, titleFontSize=10)
         .configure_view(stroke=None)
         .save("combined_time_series_role_percent.pdf", format="pdf")
     )
@@ -308,8 +317,6 @@ def plot_topic_heat_map(
     severity = comment_annotations.select(
         pl.col("comment_id", "assignment_id", "bullying_severity")
     ).filter(pl.col("bullying_severity").is_not_null())
-
-    print(severity)
 
     severity_topic = comment_topics.join(
         severity,
@@ -342,13 +349,13 @@ def plot_topic_heat_map(
             color=alt.Color(
                 "count:Q",
                 title="Count",
-                scale=alt.Scale(scheme="lightgreyred", domain=[73, 5000]),
+                scale=alt.Scale(range=heat_range, domain=[0, 12500], reverse=True),
             ),
         )
     )
     text = (
         alt.Chart(heat_map)
-        .mark_text(baseline="middle")
+        .mark_text(baseline="middle", fontSize=10)
         .encode(
             x="bullying_severity:O",
             y="topic:O",
@@ -358,8 +365,8 @@ def plot_topic_heat_map(
     )
     (
         (figure + text)
-        .properties(title="Topic Severity Heatmap", height=200, width=200)
-        .configure_title(fontSize=12, anchor="middle", color="black")
+        .properties(height=200, width=200)
+        .configure_axis(titleFontSize=10)
         .save("topic_severity_heatmap.pdf", format="pdf")
     )
 
@@ -408,20 +415,18 @@ def plot_cb(comments: pl.DataFrame, comment_annotations: pl.DataFrame):
             ).legend(
                 title=None,
                 orient="none",
-                legendX=390,
+                legendX=290,
                 legendY=10,
                 direction="horizontal",
                 titleOrient="left",
             ),
         )
         .properties(
-            title="Temporal Dynamics of Cyberbullying",
             width=600,
-            height=200,
+            height=75,
         )
         .configure_legend(symbolStrokeColor="black", symbolStrokeWidth=1)
-        .configure_title(fontSize=12, anchor="middle", color="black")
-        .configure_axis(grid=False)
+        .configure_axis(grid=False, titleFontSize=10)
         .configure_view(stroke=None)
         .save("time_series_cb.pdf", format="pdf")
     )
@@ -436,6 +441,6 @@ comment_topics = query_duckdb("SELECT * FROM mturk.comment_topics;")
 # percent_bully_annotations(comment_annotations)
 # count_comments_majority_bullying(comment_annotations)
 plot_severity_timeseries(comments, comment_annotations)
-# plot_role_timeseries(comments, comment_annotations)
-# plot_topic_heat_map(comment_topics, comment_annotations)
+plot_role_timeseries(comments, comment_annotations)
+plot_topic_heat_map(comment_topics, comment_annotations)
 plot_cb(comments, comment_annotations)
