@@ -67,27 +67,27 @@ def write_severity_tables(
         .alias("severity"),
     ).filter(pl.col("severity") > min_severity)
 
-    comment_sequence = comments.select(pl.col("commnet_buckets", "comment_id"))
+    comment_sequence = comments.select(pl.col("comment_buckets", "comment_id"))
     severity = numeric_severity.join(comment_sequence, on="comment_id")
     samples: list[pl.DataFrame] = []
-    for commnet_buckets in range(1, 151):
-        this_comment = severity.filter(pl.col("commnet_buckets") == commnet_buckets)
+    for comment_buckets in range(1, 151):
+        this_comment = severity.filter(pl.col("comment_buckets") == comment_buckets)
         for _ in range(1000):
             comment_mean = (
                 this_comment.sample(1000, shuffle=True, with_replacement=True)
-                .group_by("commnet_buckets")
+                .group_by("comment_buckets")
                 .agg(pl.col("severity").mean().alias("mean_severity"))
             )
             samples.append(comment_mean)
     sampled_severity = pl.concat(samples, how="vertical")
     bootstrapped_severity_stats = (
-        sampled_severity.group_by("commnet_buckets")
+        sampled_severity.group_by("comment_buckets")
         .agg(
             pl.col("mean_severity").quantile(0.05).alias("lower_5th"),
             pl.col("mean_severity").mean().alias("mean_severity"),
             pl.col("mean_severity").quantile(0.95).alias("upper_95th"),
         )
-        .sort("commnet_buckets")
+        .sort("comment_buckets")
     )
     print(bootstrapped_severity_stats)
     bootstrapped_severity_stats.write_csv(
@@ -122,15 +122,15 @@ def write_role_tables(
         )
         .sort("comment_id")
     )
-    comment_sequence = comments.select(pl.col("commnet_buckets", "comment_id"))
+    comment_sequence = comments.select(pl.col("comment_buckets", "comment_id"))
     time_line_role = filtered_roles.join(comment_sequence, on="comment_id")
     comment_role_counts = (
         (
-            time_line_role.group_by(["commnet_buckets", "remaped_role"])
+            time_line_role.group_by(["comment_buckets", "remaped_role"])
             .len("role_count")
-            .sort("commnet_buckets")
+            .sort("comment_buckets")
         )
-        .pivot("remaped_role", index="commnet_buckets", values="role_count")
+        .pivot("remaped_role", index="comment_buckets", values="role_count")
         .fill_null(0)
     )
     comment_role_counts.write_csv("time_series_role_counts.txt")
@@ -203,27 +203,27 @@ def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame
         .select(pl.col("comment_id", "percentage"))
         .sort("comment_id")
     )
-    comment_sequence = comments.select(pl.col("commnet_buckets", "comment_id"))
+    comment_sequence = comments.select(pl.col("comment_buckets", "comment_id"))
     samples: list[pl.DataFrame] = []
     percents = comment_percents.join(comment_sequence, on="comment_id")
-    for commnet_buckets in range(1, 151):
-        this_comment = percents.filter(pl.col("commnet_buckets") == commnet_buckets)
+    for comment_buckets in range(1, 151):
+        this_comment = percents.filter(pl.col("comment_buckets") == comment_buckets)
         for _ in range(1000):
             mean_sample = (
                 this_comment.sample(1000, shuffle=True, with_replacement=True)
-                .group_by("commnet_buckets")
+                .group_by("comment_buckets")
                 .agg(pl.col("percentage").mean().alias("mean_percentage"))
             )
             samples.append(mean_sample)
     sampled_percents = pl.concat(samples, how="vertical")
     bootstrapped_percent_stats = (
-        sampled_percents.group_by("commnet_buckets")
+        sampled_percents.group_by("comment_buckets")
         .agg(
             pl.col("mean_percentage").quantile(0.05).alias("lower_5th"),
             pl.col("mean_percentage").mean().alias("mean").alias("mean_cb_percentage"),
             pl.col("mean_percentage").quantile(0.95).alias("upper_95th"),
         )
-        .sort("commnet_buckets")
+        .sort("comment_buckets")
     )
     print(bootstrapped_percent_stats)
     bootstrapped_percent_stats.write_csv("boot_strap_percent_stats.txt")
