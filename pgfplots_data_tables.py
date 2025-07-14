@@ -35,14 +35,13 @@ def write_role_annotation_count_table(comment_annotations: pl.DataFrame):
         .otherwise(pl.lit("Unknown"))
         .alias("bullying_role")
     )
-
     (
         comment_annotations.filter(pl.col("bullying_role").is_not_null())
         .select(role_expression)
         .group_by("bullying_role")
         .len("role_count")
         .sort("role_count", descending=True)
-        .write_csv("role_counts.txt")
+        .write_csv("role_counts.txt", separator=";")
     )
 
 
@@ -67,31 +66,35 @@ def write_severity_tables(
         .alias("severity"),
     ).filter(pl.col("severity") > min_severity)
 
-    comment_sequence = comments.select(pl.col("comment_buckets", "comment_id"))
+    comment_sequence = comments.select(
+        pl.col("comment_bucket", "comment_bucket_display", "comment_id")
+    )
     severity = numeric_severity.join(comment_sequence, on="comment_id")
     samples: list[pl.DataFrame] = []
-    for comment_buckets in range(1, 151):
-        this_comment = severity.filter(pl.col("comment_buckets") == comment_buckets)
-        for _ in range(1000):
+    for comment_bucket in range(1, 151):
+        this_comment = severity.filter(pl.col("comment_bucket") == comment_bucket)
+        for _ in range(5000):
             comment_mean = (
-                this_comment.sample(1000, shuffle=True, with_replacement=True)
-                .group_by("comment_buckets")
+                this_comment.sample(
+                    len(this_comment), shuffle=True, with_replacement=True
+                )
+                .group_by(["comment_bucket", "comment_bucket_display"])
                 .agg(pl.col("severity").mean().alias("mean_severity"))
             )
             samples.append(comment_mean)
     sampled_severity = pl.concat(samples, how="vertical")
     bootstrapped_severity_stats = (
-        sampled_severity.group_by("comment_buckets")
+        sampled_severity.group_by(["comment_bucket", "comment_bucket_display"])
         .agg(
             pl.col("mean_severity").quantile(0.05).alias("lower_5th"),
             pl.col("mean_severity").mean().alias("mean_severity"),
             pl.col("mean_severity").quantile(0.95).alias("upper_95th"),
         )
-        .sort("comment_buckets")
+        .sort("comment_bucket")
     )
     print(bootstrapped_severity_stats)
     bootstrapped_severity_stats.write_csv(
-        f"boot_strap_severity_stats_with_null_{with_nulls}.txt"
+        f"boot_strap_severity_stats_with_null_{with_nulls}.txt", separator=";"
     )
 
 
@@ -122,18 +125,26 @@ def write_role_tables(
         )
         .sort("comment_id")
     )
-    comment_sequence = comments.select(pl.col("comment_buckets", "comment_id"))
+    comment_sequence = comments.select(
+        pl.col("comment_bucket", "comment_bucket_display", "comment_id")
+    )
     time_line_role = filtered_roles.join(comment_sequence, on="comment_id")
     comment_role_counts = (
         (
-            time_line_role.group_by(["comment_buckets", "remaped_role"])
+            time_line_role.group_by(
+                ["comment_bucket", "comment_bucket_display", "remaped_role"]
+            )
             .len("role_count")
-            .sort("comment_buckets")
+            .sort("comment_bucket")
         )
-        .pivot("remaped_role", index="comment_buckets", values="role_count")
+        .pivot(
+            "remaped_role",
+            index=["comment_bucket", "comment_bucket_display"],
+            values="role_count",
+        )
         .fill_null(0)
     )
-    comment_role_counts.write_csv("time_series_role_counts.txt")
+    comment_role_counts.write_csv("time_series_role_counts.txt", separator=";")
 
 
 def write_topic_severity_heat_map_tables(
@@ -150,7 +161,7 @@ def write_topic_severity_heat_map_tables(
     )
     cleaned_topics.group_by("topic").len("topic_count").sort(
         "topic_count", descending=True
-    ).write_csv("topic_counts.txt")
+    ).write_csv("topic_counts.txt", separator=";")
 
     severity = comment_annotations.select(
         pl.col("comment_id", "assignment_id"),
@@ -159,7 +170,7 @@ def write_topic_severity_heat_map_tables(
 
     severity.group_by("bullying_severity").len("severity_count").sort(
         "severity_count", descending=True
-    ).write_csv("severity_counts.txt")
+    ).write_csv("severity_counts.txt", separator=";")
 
     severity_topic = cleaned_topics.join(
         severity,
@@ -171,7 +182,7 @@ def write_topic_severity_heat_map_tables(
         .len("count")
         .sort("count")
     )
-    heat_map.write_csv("topic_severit_heat_map.txt")
+    heat_map.write_csv("topic_severit_heat_map.txt", separator=";")
 
 
 def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame):
@@ -189,7 +200,7 @@ def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame
         .group_by("is_cyberbullying")
         .len("bullying_count")
         .sort("bullying_count", descending=True)
-        .write_csv("bullying_counts.txt")
+        .write_csv("bullying_counts.txt", separator=";")
     )
     comment_percents = (
         comment_annotations.group_by("comment_id", "is_cyberbullying")
@@ -203,37 +214,42 @@ def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame
         .select(pl.col("comment_id", "percentage"))
         .sort("comment_id")
     )
-    comment_sequence = comments.select(pl.col("comment_buckets", "comment_id"))
+    comment_sequence = comments.select(
+        pl.col("comment_bucket", "comment_bucket_display", "comment_id")
+    )
     samples: list[pl.DataFrame] = []
     percents = comment_percents.join(comment_sequence, on="comment_id")
-    for comment_buckets in range(1, 151):
-        this_comment = percents.filter(pl.col("comment_buckets") == comment_buckets)
-        for _ in range(1000):
+    for comment_bucket in range(1, 151):
+        this_comment = percents.filter(pl.col("comment_bucket") == comment_bucket)
+        for _ in range(SAMPLES):
             mean_sample = (
-                this_comment.sample(1000, shuffle=True, with_replacement=True)
-                .group_by("comment_buckets")
+                this_comment.sample(
+                    len(this_comment), shuffle=True, with_replacement=True
+                )
+                .group_by(["comment_bucket", "comment_bucket_display"])
                 .agg(pl.col("percentage").mean().alias("mean_percentage"))
             )
             samples.append(mean_sample)
     sampled_percents = pl.concat(samples, how="vertical")
     bootstrapped_percent_stats = (
-        sampled_percents.group_by("comment_buckets")
+        sampled_percents.group_by(["comment_bucket", "comment_bucket_display"])
         .agg(
             pl.col("mean_percentage").quantile(0.05).alias("lower_5th"),
             pl.col("mean_percentage").mean().alias("mean").alias("mean_cb_percentage"),
             pl.col("mean_percentage").quantile(0.95).alias("upper_95th"),
         )
-        .sort("comment_buckets")
+        .sort("comment_bucket")
     )
     print(bootstrapped_percent_stats)
-    bootstrapped_percent_stats.write_csv("boot_strap_percent_stats.txt")
+    bootstrapped_percent_stats.write_csv("boot_strap_percent_stats.txt", separator=";")
 
 
 comments = query_duckdb("SELECT * FROM sequenced_comments;")
 comment_annotations = query_duckdb("SELECT * FROM mturk.comment_annotations;")
 comment_topics = query_duckdb("SELECT * FROM mturk.comment_topics;")
-write_severity_tables(comments, comment_annotations, False)
-write_bully_tables(comments, comment_annotations)
+# write_severity_tables(comments, comment_annotations, False)
+# write_severity_tables(comments, comment_annotations, True)
+# write_bully_tables(comments, comment_annotations)
 write_role_tables(comments, comment_annotations)
-write_topic_severity_heat_map_tables(comment_topics, comment_annotations)
-write_role_annotation_count_table(comment_annotations)
+# write_topic_severity_heat_map_tables(comment_topics, comment_annotations)
+# write_role_annotation_count_table(comment_annotations)
