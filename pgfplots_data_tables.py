@@ -129,22 +129,34 @@ def write_role_tables(
         pl.col("comment_bucket", "comment_bucket_display", "comment_id")
     )
     time_line_role = filtered_roles.join(comment_sequence, on="comment_id")
-    comment_role_counts = (
-        (
-            time_line_role.group_by(
-                ["comment_bucket", "comment_bucket_display", "remaped_role"]
-            )
-            .len("role_count")
-            .sort("comment_bucket")
+    unpivoted_comment_role_counts = (
+        time_line_role.group_by(
+            ["comment_bucket", "comment_bucket_display", "remaped_role"]
+        )
+        .len("role_count")
+        .sort("comment_bucket")
+    )
+    unpivoted_comment_role_counts.pivot(
+        "remaped_role",
+        index=["comment_bucket", "comment_bucket_display"],
+        values="role_count",
+    ).fill_null(0).write_csv("time_series_role_counts.txt", separator=";")
+
+    (
+        unpivoted_comment_role_counts.select(
+            pl.col("remaped_role", "comment_bucket", "comment_bucket_display"),
+            (pl.col("role_count") / pl.sum("role_count").over("comment_bucket"))
+            .round(4)
+            .alias("percentage"),
         )
         .pivot(
             "remaped_role",
             index=["comment_bucket", "comment_bucket_display"],
-            values="role_count",
+            values="percentage",
         )
-        .fill_null(0)
+        .fill_null(0.0)
+        .write_csv("time_series_role_percentage.txt", separator=";")
     )
-    comment_role_counts.write_csv("time_series_role_counts.txt", separator=";")
 
 
 def write_topic_severity_heat_map_tables(
