@@ -4,7 +4,7 @@ from pathlib import Path
 import duckdb
 import polars as pl
 
-SAMPLES = 15_000
+SAMPLES = 1
 
 
 def query_duckdb(query: str) -> pl.DataFrame:
@@ -40,8 +40,53 @@ def write_role_annotation_count_table(comment_annotations: pl.DataFrame):
         .select(role_expression)
         .group_by("bullying_role")
         .len("role_count")
+        .with_columns(
+            (pl.lit(100) * pl.col("role_count") / pl.sum("role_count"))
+            .round()
+            .cast(pl.Int64)
+            .alias("percentage")
+        )
+        .with_columns(
+            pl.concat_str(
+                [
+                    pl.col("role_count").map_elements(
+                        lambda x: f"{x:,}", return_dtype=pl.String
+                    ),
+                    pl.lit(" ("),
+                    pl.col("percentage"),
+                    pl.lit(r"\%)"),
+                ]
+            ).alias("label"),
+        )
         .sort("role_count", descending=True)
         .write_csv("role_counts.txt", separator=";")
+    )
+
+
+def write_simple_severity_counts(severity: pl.DataFrame) -> None:
+    (
+        severity.group_by("bullying_severity")
+        .len("severity_count")
+        .with_columns(
+            (pl.lit(100) * pl.col("severity_count") / pl.sum("severity_count"))
+            .round()
+            .cast(pl.Int64)
+            .alias("percentage")
+        )
+        .with_columns(
+            pl.concat_str(
+                [
+                    pl.col("severity_count").map_elements(
+                        lambda x: f"{x:,}", return_dtype=pl.String
+                    ),
+                    pl.lit(" ("),
+                    pl.col("percentage"),
+                    pl.lit(r"\%)"),
+                ]
+            ).alias("label"),
+        )
+        .sort("severity_count", descending=True)
+        .write_csv("severity_counts.txt", separator=";")
     )
 
 
@@ -172,7 +217,9 @@ def write_simple_topic_count(cleaned_topics: pl.DataFrame) -> None:
         .with_columns(
             pl.concat_str(
                 [
-                    pl.col("topic_count"),
+                    pl.col("topic_count").map_elements(
+                        lambda x: f"{x:,}", return_dtype=pl.String
+                    ),
                     pl.lit(" ("),
                     pl.col("percentage"),
                     pl.lit(r"\%)"),
@@ -202,10 +249,6 @@ def write_topic_severity_heat_map_tables(
         pl.col("bullying_severity").str.to_titlecase().alias("bullying_severity"),
     ).filter(pl.col("bullying_severity").is_not_null())
 
-    severity.group_by("bullying_severity").len("severity_count").sort(
-        "severity_count", descending=True
-    ).write_csv("severity_counts.txt", separator=";")
-
     severity_topic = cleaned_topics.join(
         severity,
         on=["comment_id", "assignment_id"],
@@ -219,11 +262,7 @@ def write_topic_severity_heat_map_tables(
     heat_map.write_csv("topic_severit_heat_map.txt", separator=";")
 
 
-def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame):
-    """
-    I want to count the percent of annotators within a comment that voted bully,
-    then I want to bootstrapped the percentages for each comment in the comment sequence.
-    """
+def write_simple_bully_counts(comment_annotations: pl.DataFrame) -> None:
     (
         comment_annotations.select(
             pl.when(pl.col("is_cyberbullying"))
@@ -233,9 +272,35 @@ def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame
         )
         .group_by("is_cyberbullying")
         .len("bullying_count")
+        .with_columns(
+            (pl.lit(100) * pl.col("bullying_count") / pl.sum("bullying_count"))
+            .round()
+            .cast(pl.Int64)
+            .alias("percentage")
+        )
+        .with_columns(
+            pl.concat_str(
+                [
+                    pl.col("bullying_count").map_elements(
+                        lambda x: f"{x:,}", return_dtype=pl.String
+                    ),
+                    pl.lit(" ("),
+                    pl.col("percentage"),
+                    pl.lit(r"\%)"),
+                ]
+            ).alias("label"),
+        )
         .sort("bullying_count", descending=True)
         .write_csv("bullying_counts.txt", separator=";")
     )
+
+
+def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame):
+    """
+    I want to count the percent of annotators within a comment that voted bully,
+    then I want to bootstrapped the percentages for each comment in the comment sequence.
+    """
+    write_simple_bully_counts(comment_annotations)
     comment_percents = (
         comment_annotations.group_by("comment_id", "is_cyberbullying")
         .len("bullying_count")
@@ -281,8 +346,8 @@ def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame
 comments = query_duckdb("SELECT * FROM sequenced_comments;")
 comment_annotations = query_duckdb("SELECT * FROM mturk.comment_annotations;")
 comment_topics = query_duckdb("SELECT * FROM mturk.comment_topics;")
-# write_severity_tables(comments, comment_annotations, True)
-# write_bully_tables(comments, comment_annotations)
-# write_role_tables(comments, comment_annotations)
+write_severity_tables(comments, comment_annotations, True)
+write_bully_tables(comments, comment_annotations)
+write_role_tables(comments, comment_annotations)
 write_topic_severity_heat_map_tables(comment_topics, comment_annotations)
-# write_role_annotation_count_table(comment_annotations)
+write_role_annotation_count_table(comment_annotations)
