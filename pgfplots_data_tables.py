@@ -159,6 +159,31 @@ def write_role_tables(
     )
 
 
+def write_simple_topic_count(cleaned_topics: pl.DataFrame) -> None:
+    (
+        cleaned_topics.group_by("topic")
+        .len("topic_count")
+        .with_columns(
+            (pl.lit(100) * pl.col("topic_count") / pl.sum("topic_count"))
+            .round()
+            .cast(pl.Int64)
+            .alias("percentage")
+        )
+        .with_columns(
+            pl.concat_str(
+                [
+                    pl.col("topic_count"),
+                    pl.lit(" ("),
+                    pl.col("percentage"),
+                    pl.lit(r"\%)"),
+                ]
+            ).alias("label"),
+        )
+        .sort("topic_count", descending=True)
+        .write_csv("topic_counts.txt", separator=";")
+    )
+
+
 def write_topic_severity_heat_map_tables(
     comment_topics: pl.DataFrame, comment_annotations: pl.DataFrame
 ):
@@ -171,10 +196,7 @@ def write_topic_severity_heat_map_tables(
         .str.to_titlecase()
         .alias("topic"),
     )
-    cleaned_topics.group_by("topic").len("topic_count").sort(
-        "topic_count", descending=True
-    ).write_csv("topic_counts.txt", separator=";")
-
+    write_simple_topic_count(cleaned_topics)
     severity = comment_annotations.select(
         pl.col("comment_id", "assignment_id"),
         pl.col("bullying_severity").str.to_titlecase().alias("bullying_severity"),
@@ -259,9 +281,8 @@ def write_bully_tables(comments: pl.DataFrame, comment_annotations: pl.DataFrame
 comments = query_duckdb("SELECT * FROM sequenced_comments;")
 comment_annotations = query_duckdb("SELECT * FROM mturk.comment_annotations;")
 comment_topics = query_duckdb("SELECT * FROM mturk.comment_topics;")
-# write_severity_tables(comments, comment_annotations, False)
 # write_severity_tables(comments, comment_annotations, True)
 # write_bully_tables(comments, comment_annotations)
-write_role_tables(comments, comment_annotations)
-# write_topic_severity_heat_map_tables(comment_topics, comment_annotations)
+# write_role_tables(comments, comment_annotations)
+write_topic_severity_heat_map_tables(comment_topics, comment_annotations)
 # write_role_annotation_count_table(comment_annotations)
