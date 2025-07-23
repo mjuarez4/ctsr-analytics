@@ -115,6 +115,7 @@ def write_severity_tables(
         pl.col("comment_bucket", "comment_bucket_display", "comment_id")
     )
     severity = numeric_severity.join(comment_sequence, on="comment_id")
+    write_simple_severity_counts(severity)
     samples: list[pl.DataFrame] = []
     for comment_bucket in range(1, 151):
         this_comment = severity.filter(pl.col("comment_bucket") == comment_bucket)
@@ -204,7 +205,7 @@ def write_role_tables(
     )
 
 
-def write_simple_topic_count(cleaned_topics: pl.DataFrame) -> None:
+def write_simple_topic_counts(cleaned_topics: pl.DataFrame) -> None:
     (
         cleaned_topics.group_by("topic")
         .len("topic_count")
@@ -243,7 +244,7 @@ def write_topic_severity_heat_map_tables(
         .str.to_titlecase()
         .alias("topic"),
     )
-    write_simple_topic_count(cleaned_topics)
+    write_simple_topic_counts(cleaned_topics)
     severity = comment_annotations.select(
         pl.col("comment_id", "assignment_id"),
         pl.col("bullying_severity").str.to_titlecase().alias("bullying_severity"),
